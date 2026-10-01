@@ -10,8 +10,6 @@ except Exception as error:
     print("Can't load 'qwen3:8b' model")
 
 def getting_task(state: TaskDoerAgent) -> Command[Literal["write_code"]]:
-    task_title: str = state.task
-    task_description: str = state.description
     prompt: str = f""" I have a task.
     --------------- The title of my task -------------------
     Title: 
