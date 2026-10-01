@@ -10,4 +10,5 @@ class TaskDoerAgent(BaseModel):
     result_code: str | None
     task: str
     description: str
+    prompt: str
     tester_result: TesterResult | None
