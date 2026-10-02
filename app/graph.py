@@ -1,7 +1,7 @@
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
-from nodes.task_doer_nodes import getting_task, human_decision, test_code, write_code, show_result
-from states.task_doer_agent_state import TaskDoerAgent
+from app.nodes.task_doer_nodes import getting_task, human_decision, test_code, write_code, show_result
+from app.states.task_doer_agent_state import TaskDoerAgent
 
 workflow = StateGraph(TaskDoerAgent)
 
