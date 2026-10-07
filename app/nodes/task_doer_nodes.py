@@ -49,6 +49,7 @@ def test_code(state: TaskDoerAgent) -> Command[Literal["human_decision", "write_
     messages: List[str] = [state.prompt, state.result_code.code, "Execut python code and check is corect or not(based on syntax and unittests). and tell is ok or not"]
     result = ollama_model_for_tool_call.invoke(messages)
     result_messages: List[str] = [state.prompt, state.result_code.code]
+    response = None
     if result.tool_calls:
         for tool_call in result.tool_calls:
             if tool_call.get("name") == "python_code_executer":
