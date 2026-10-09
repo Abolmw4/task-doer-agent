@@ -1,6 +1,6 @@
 from app.states.task_doer_agent_state import TaskDoerAgent, TesterResult, ResultCode
 from app.tools.task_doer_tools import python_code_executer
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 from langgraph.graph import END
 from langchain_ollama import ChatOllama
 from typing import Literal, List
@@ -23,7 +23,7 @@ def getting_task(state: TaskDoerAgent) -> Command[Literal["write_code"]]:
     ----------------------------------
     Now please write a python code for this task and filled the code in result_code field.
     """
-    return Command(update=TaskDoerAgent(code_id=state.code_id, task=state.task, description=state.description, prompt=prompt, tester_result=None, result_code=None), goto="write_code")
+    return Command(update={"prompt":prompt, "tester_result":None, "result_code":None}, goto="write_code")
 
 def write_code(state: TaskDoerAgent) -> Command[Literal["test_code"]]:
     ollama_model_write_code = OLLAMA_RAW_MODEL.with_structured_output(ResultCode)
@@ -38,10 +38,10 @@ def write_code(state: TaskDoerAgent) -> Command[Literal["test_code"]]:
         """
         updated_prompt: List[str] = [state.prompt, issues]
         result = ollama_model_write_code.invoke(updated_prompt)
-        return Command(update=TaskDoerAgent(code_id=state.code_id, task=state.task, description=state.description, prompt=state.prompt, tester_result=None, result_code=result), goto="test_code")
+        return Command(update={"tester_result":None, "result_code":result}, goto="test_code")
     
     result = ollama_model_write_code.invoke(state.prompt)
-    return Command(update=TaskDoerAgent(code_id=state.code_id, task=state.task, description=state.description, prompt=state.prompt, tester_result=None, result_code=result), goto="test_code")
+    return Command(update={"tester_result":None, "result_code":result}, goto="test_code")
 
 def test_code(state: TaskDoerAgent) -> Command[Literal["human_decision", "write_code"]]:
     ollama_model_for_tool_call = OLLAMA_RAW_MODEL.bind_tools([python_code_executer])
@@ -59,14 +59,31 @@ def test_code(state: TaskDoerAgent) -> Command[Literal["human_decision", "write_
         response = ollama_molde_for_getting_response.invoke(result_messages)
         
         goto = "write_code" if response.syntactic_issue != '' or response.logic_issue != '' else "human_decision"
-    
-    return Command(update=TaskDoerAgent(code_id=state.code_id, task=state.task, description=state.description, prompt=state.prompt, tester_result=response, result_code=state.result_code), goto=goto)
-
+    return Command(update={"tester_result":response}, goto=goto)
            
 
 def human_decision(state: TaskDoerAgent) -> Command[Literal["write_code", "show_result"]]:
-    print("in human decision")
+    print("You are in human decision")
+    decsion = interrupt({"code": state.result_code.code, "question": "Do you approved this code?", "options":["yes", "no"], "decription": "if you reject the code please give me feedback."})
+    if isinstance(decsion, bool):
+        approved = decsion
+    
+    elif isinstance(decsion, dict):
+        answer = decsion.get("approved", False)
+        approved = answer if isinstance(answer, bool) else str(answer).strip().lower() in {"yes", "true"}
+    
+    else:
+        approved = str(decsion).strip().lower() in {"yes", 'y', "true", "approved"}
+        
+    if approved:
+        return Command(update={}, goto="show_result")
+    else:
+        prompt = state.prompt + f"feedback:\n{decsion.get('feedback')}"
+        return Command(update={"prompt":prompt}, goto="write_code")
+    
+        
 
 def show_result(state: TaskDoerAgent) -> Command[Literal[END]]:
-    pass
-    
+    print("you ar in show_result node")
+    print(state.result_code.code)
+    return Command(update={}, goto=END)
