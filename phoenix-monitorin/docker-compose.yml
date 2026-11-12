@@ -1,32 +1,42 @@
 services:
+
   phoenix:
     image: arizephoenix/phoenix:latest
-    ports:
-      - "6006:6006"  # UI and OTLP HTTP collector
-      - "4317:4317"  # OTLP gRPC collector
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      args:
-        OPENAI_API_KEY: ${OPENAI_API_KEY}
-    ports:
-      - "8000:8000"
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
-      - PROD_CORS_ORIGIN=http://localhost:3000
-      # Set INSTRUMENT_LLAMA_INDEX=false to disable instrumentation
-      - INSTRUMENT_LLAMA_INDEX=true
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "http://0.0.0.0:8000/api/chat/healthcheck"]
-      interval: 5s
-      timeout: 1s
-      retries: 5
-  frontend:
-    build: frontend
-    ports:
-      - "3000:3000"
+
     depends_on:
-      backend:
+      db:
         condition: service_healthy
+
+    ports:
+      - "127.0.0.1:6006:6006"
+      - "127.0.0.1:4317:4317"
+
+    environment:
+      PHOENIX_HOST: "0.0.0.0"
+      PHOENIX_PORT: "6006"
+      PHOENIX_GRPC_PORT: "4317"
+      PHOENIX_ENABLE_AUTH: "false"
+
+      PHOENIX_SQL_DATABASE_URL: "postgresql://postgres:postgres@db:5432/postgres"
+
+  db:
+    image: postgres:16
+    restart: always
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+
+    volumes:
+      - database_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  database_data:
+    driver: local
