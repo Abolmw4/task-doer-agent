@@ -1,23 +1,27 @@
 from app.graph import app
+from uuid import uuid4
 from app.states.task_doer_agent_state import TaskDoerAgent
 from langgraph.types import Command
 from typing import Dict, Any
 
 def main():
-    inital_state = TaskDoerAgent(code_id="code-101",
-                                 result_code=None,
-                                 task="Tic Toc Toe game",
-                                 description="I have to play Tic Toc Toe with computer(I mean me vs computer play tic toc toe)",
-                                 prompt = None,
-                                 tester_result = None)
+    inital_state: TaskDoerAgent = {"code_id": "code-101",
+                                 "result_code":None,
+                                 "task": "Tic Toc Toe game",
+                                 "description": "I have to play Tic Toc Toe with computer(I mean me vs computer play tic toc toe)",
+                                 "prompt": None,
+                                 "tester_result": None}
 
+    # Use a new ID for each new task execution.
     config = {"configurable": {"thread_id": "task-doer-101"}}
+    
     result: Dict[str, Any] = app.invoke(inital_state, config=config)
     while "__interrupt__" in result:
         inter = result["__interrupt__"][0].value
         print("code", inter["code"])
-        approved = input(inter["question"] + 'yes/no: ')
-        feedback = "" if approved.strip().lower() in {"yes", "y", "true"} else input("Feedback: ")
+        approved = bool(input(inter["question"] + 'yes/no: '))
+        # feedback = "" if approved.strip().lower() in {"yes", "y", "true"} else input("Feedback: ")
+        feedback = "" if approved else input("Feedback: ")
         result = app.invoke(Command(resume={"approved": approved, "feedback":feedback}), config=config)
 
     print("\n" + "=" * 60)
