@@ -1,6 +1,6 @@
 from typing import TypedDict
 from pydantic import BaseModel
-
+from dataclasses import dataclass
 
 # Pydantic models: Used for LLM structured output
 
@@ -25,3 +25,7 @@ class TaskDoerAgent(TypedDict):
     prompt: str | None
     result_code: dict | None
     tester_result: dict | None
+    
+@dataclass
+class TaskDoerAgentContext:
+    user_id: str

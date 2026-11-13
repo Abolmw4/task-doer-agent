@@ -1,30 +1,56 @@
-from app.states.task_doer_agent_state import TaskDoerAgent, TesterResult, ResultCode
+from app.states.task_doer_agent_state import TaskDoerAgent, TesterResult, ResultCode, TaskDoerAgentContext
 from app.tools.task_doer_tools import python_code_executer
 from langgraph.types import Command, interrupt
 from langgraph.graph import END
+from langgraph.runtime import Runtime
 from langchain_ollama import ChatOllama
 from typing import Literal, List
+from uuid import uuid4
 
 try:
     OLLAMA_RAW_MODEL = ChatOllama(model="qwen3:8b", base_url="http://localhost:11434")
 except Exception as error:
     print("Can't load 'qwen3:8b' model")
 
-def getting_task(state: TaskDoerAgent):
+def getting_task(state: TaskDoerAgent, runtime: Runtime[TaskDoerAgentContext]):
+    user_id = runtime.context.user_id
+    
+    namespace = (user_id, "memories")
+    
+    memories = runtime.store.search(namespace=namespace, limit=20)
+    previus_memories = [memroy.value["data"] for memroy in memories]
+    
+    if len(previus_memories) > 0:
+        
+        prompt = f"""
+        I have a task.
 
-    prompt = f"""
-    I have a task.
+        Title:
+        {state["task"]}
 
-    Title:
-    {state["task"]}
+        Description:
+        {state["description"]}
+        
+        Some prior information that might help you:
+        {previus_memories}
 
-    Description:
-    {state["description"]}
+        Now please write Python code for this task
+        and fill the code in the result_code field.
+        """
+    else:
+        prompt = f"""
+        I have a task.
+        
+        Title:
+        {state["task"]}
+        
+        Description:
+        {state["description"]}
 
-    Now please write Python code for this task
-    and fill the code in the result_code field.
-    """
-
+        Now please write Python code for this task
+        and fill the code in the result_code field.
+        """
+        
     return Command(update={"prompt": prompt, "tester_result": None, "result_code": None}, goto="write_code")
 
 def write_code(state: TaskDoerAgent):
@@ -156,9 +182,13 @@ def human_decision(state: TaskDoerAgent):
     return Command(update={"prompt": prompt}, goto="write_code")
 
 
-
-def show_result(state: TaskDoerAgent):
-
+def show_result(state: TaskDoerAgent, runtime: Runtime[TaskDoerAgentContext]):
+    user_id = runtime.context.user_id
+    namespace = (user_id, "memories")
+    memory_id = str(uuid4())
+    memory_data = {"data": result_code.get('code')}
+    runtime.store.put(namespace=namespace, memory_id=memory_id, memory_data=memory_data)
+    
     print("You are in show_result node")
 
     result_code = state.get("result_code") or {}
