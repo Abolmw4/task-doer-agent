@@ -7,12 +7,13 @@ from langgraph.graph import StateGraph, START
 from langgraph.checkpoint.redis import RedisSaver
 from langgraph.store.postgres import PostgresStore
 from app.nodes.task_doer_nodes import getting_task, human_decision, test_code, write_code, show_result
-from app.states.task_doer_agent_state import TaskDoerAgent
+from app.states.task_doer_agent_state import TaskDoerAgent, TaskDoerAgentContext
 
 
 MODE: str = os.getenv("MODE", "production")
 
-workflow = StateGraph(TaskDoerAgent)
+workflow = StateGraph(TaskDoerAgent, context_schema=TaskDoerAgentContext)
+
 workflow.add_node("getting_task", getting_task)
 workflow.add_node("write_code", write_code)
 workflow.add_node("test_code", test_code)
