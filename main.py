@@ -10,19 +10,20 @@ from app.states.task_doer_agent_state import TaskDoerAgent
 from langgraph.types import Command
 from typing import Dict, Any
 
-def main():
-    inital_state: TaskDoerAgent = {"code_id": "code-101",
+def run_agent(task_title: str, description: str):
+    code_id = f"code-{uuid4().hex[:8]}"
+    inital_state: TaskDoerAgent = {"code_id": code_id,
                                  "result_code":None,
-                                 "task": "Tic Toc Toe game",
-                                 "description": "I have to play Tic Toc Toe with computer(I mean me vs computer play tic toc toe)",
+                                 "task": task_title,
+                                 "description": description,
                                  "prompt": None,
                                  "tester_result": None}
 
-
+    thread_id: str = f"task-doer-{uuid4().hex}"
     # Use a new ID for each new task execution.
-    config = {"configurable": {"thread_id": "task-doer-101"}, "run_name": "TaskDoerAgent", "tags": ["task-doer-agent", "ollama"], "metadata":{"agent": "TaskDoerAgent", "thread_id": "task-doer-101"}}
+    config = {"configurable": {"thread_id": thread_id}, "run_name": "TaskDoerAgent", "tags": ["task-doer-agent", "ollama"], "metadata":{"agent": "TaskDoerAgent", "thread_id": thread_id}}
 
-    while using_attributes(session_id="task-doer-101", metadata={"agent": "TaskDoerAgent", "model": "qwen3:8b"}, tags=["task-doer"]):    
+    while using_attributes(session_id=thread_id, metadata={"agent": "TaskDoerAgent", "model": "qwen3:8b", "task_title": task_title, "code_id": code_id}, tags=["task-doer"]):    
         result: Dict[str, Any] = app.invoke(inital_state, config=config)
         while "__interrupt__" in result:
             inter = result["__interrupt__"][0].value
@@ -33,10 +34,31 @@ def main():
             result = app.invoke(Command(resume={"approved": approved, "feedback":feedback}), config=config)
 
         print("\n" + "=" * 60)
-        print("Graph Execution Completed")
+        print("Task Complited")
         print("=" * 60)
         print(result)
         tracer_provider.force_flush()
+        return result
+
+def main():
+    print("=" * 60)
+    print("       TaskDoerAgent - Interactive Mode")
+    print("=" * 60)
+    while True:
+        print("\nEnter a new task (or type 'exit' to quit)")
+        task_title: str = input("Enter your task title: ").strip()
+        if task_title.lower == "exit":
+            print("agent stoped!")
+            break
+        task_description: str = input("Enter your task description: ").strip()
+        try:
+            run_agent(task_title=task_title, description=task_description)
+        except KeyboardInterrupt:
+            print("\nTask intrupted by user")
+        except Exception as error:
+            print(f"Error during task execution '{error}'")
+            
+        
 
 if __name__ == "__main__":
     try:
