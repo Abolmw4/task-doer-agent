@@ -6,7 +6,7 @@ tracer_provider = setup_phoenix()
 
 from app.graph import app
 from uuid import uuid4
-from app.states.task_doer_agent_state import TaskDoerAgent
+from app.states.task_doer_agent_state import TaskDoerAgent, TaskDoerAgentContext
 from langgraph.types import Command
 from typing import Dict, Any
 
@@ -20,18 +20,19 @@ def run_agent(task_title: str, description: str):
                                  "tester_result": None}
 
     thread_id: str = f"task-doer-{uuid4().hex}"
+    user_id = "user-101"
     # Use a new ID for each new task execution.
     config = {"configurable": {"thread_id": thread_id}, "run_name": "TaskDoerAgent", "tags": ["task-doer-agent", "ollama"], "metadata":{"agent": "TaskDoerAgent", "thread_id": thread_id}}
-
+    context = TaskDoerAgentContext(user_id=user_id)
     while using_attributes(session_id=thread_id, metadata={"agent": "TaskDoerAgent", "model": "qwen3:8b", "task_title": task_title, "code_id": code_id}, tags=["task-doer"]):    
-        result: Dict[str, Any] = app.invoke(inital_state, config=config)
+        result: Dict[str, Any] = app.invoke(inital_state, config=config, context=context)
         while "__interrupt__" in result:
             inter = result["__interrupt__"][0].value
             print("code", inter["code"])
             approved = bool(input(inter["question"] + 'yes/no: '))
             # feedback = "" if approved.strip().lower() in {"yes", "y", "true"} else input("Feedback: ")
             feedback = "" if approved else input("Feedback: ")
-            result = app.invoke(Command(resume={"approved": approved, "feedback":feedback}), config=config)
+            result = app.invoke(Command(resume={"approved": approved, "feedback":feedback}), config=config, context=context)
 
         print("\n" + "=" * 60)
         print("Task Complited")

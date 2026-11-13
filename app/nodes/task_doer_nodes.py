@@ -14,12 +14,12 @@ except Exception as error:
 
 def getting_task(state: TaskDoerAgent, runtime: Runtime[TaskDoerAgentContext]):
     user_id = runtime.context.user_id
-    
+    print("user_id", user_id)
     namespace = (user_id, "memories")
     
-    memories = runtime.store.search(namespace=namespace, limit=20)
+    memories = runtime.store.search(namespace, limit=20)
     previus_memories = [memroy.value["data"] for memroy in memories]
-    
+    print("memories", previus_memories)
     if len(previus_memories) > 0:
         
         prompt = f"""
@@ -186,13 +186,13 @@ def show_result(state: TaskDoerAgent, runtime: Runtime[TaskDoerAgentContext]):
     user_id = runtime.context.user_id
     namespace = (user_id, "memories")
     memory_id = str(uuid4())
-    memory_data = {"data": result_code.get('code')}
-    runtime.store.put(namespace=namespace, memory_id=memory_id, memory_data=memory_data)
+    memory_data = {"data": state.get('result_code')}
+    runtime.store.put(namespace, memory_id, memory_data)
     
     print("You are in show_result node")
 
     result_code = state.get("result_code") or {}
 
-    print(result_code.get("code"))
+    print(result_code)
 
     return Command(update={}, goto=END)
