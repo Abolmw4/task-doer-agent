@@ -39,4 +39,7 @@ def main():
         tracer_provider.force_flush()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        tracer_provider.shutdown()
