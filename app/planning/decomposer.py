@@ -1,5 +1,5 @@
 from langchain_ollama import ChatOllama
-from states.task_doer_agent_state import PlanStep, TaskPlan
+from app.states.task_doer_agent_state import PlanStep, TaskPlan
 
 class TaskDecomposer:
     def __init__(self, model: ChatOllama) -> None:
