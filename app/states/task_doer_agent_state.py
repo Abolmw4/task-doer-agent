@@ -1,4 +1,4 @@
-from typing import TypedDict
+from typing import TypedDict, List
 from pydantic import BaseModel
 from dataclasses import dataclass
 
@@ -29,3 +29,12 @@ class TaskDoerAgent(TypedDict):
 @dataclass
 class TaskDoerAgentContext:
     user_id: str
+
+class PlanStep(BaseModel):
+    id: str
+    description: str
+    expected_output: str
+    
+class TaskPlan(BaseModel):
+    goal: str
+    steps: List[PlanStep]
