@@ -7,6 +7,7 @@ class ReAct:
         self.ract_model = model.bind_tools(tools)
         self.max_iteration = max_iteration
         self.tools = {tool.name: tool for tool in tools}
+        
     def __call__(self, *args):
         step, previous_observations = args
         
@@ -32,19 +33,21 @@ class ReAct:
                      """}, {"role": "user", 
                             "content":f"""
                             Current step:
-                            {step}
-                            
+                            id:{step.get('id')}
+                            description:{step.get('description')}
+                            expected_value:{step.get('expected_output')}
                             Previous observations:
                             {previous_observations}
                             
                             """}]
-        
+        observations = []
         for iteration in range(self.max_iteration):
             response = self.ract_model.invoke(messages)
             messages.append(response)
             if not response.tool_calls:
-                return {"status": "success",
+                return {"status": "True",
                         "result": response.content,
+                        "observation": observations,
                         "iteration": iteration + 1}
                 
             for tool_call in response.tool_calls:
@@ -52,11 +55,17 @@ class ReAct:
                 tool_args = tool_call.get("args")
                 tool_id = tool_call.get("id")
                 if tool_name not in self.tools:
-                    observation: str = f"Unknow tool '{tool_name}'"
+                    raise ValueError(f"Unknown tool: {tool_name}")
                 else:
                     observation = self.tools[tool_name].invoke(tool_args)
+                    observation = f"""code / statment: {tool_args}
+                                      observation: {observation}"""
+                    
+                    observations.append(observation)
+                    
                     messages.append(ToolMessage(content=str(observation), tool_call_id=tool_id))
                 
-        return {"status": "success",
+        return {"status": "True",
                 "result": "Maximum ReAct iteration reached.",
+                "observation": observations,
                 "iteration": self.max_iteration}

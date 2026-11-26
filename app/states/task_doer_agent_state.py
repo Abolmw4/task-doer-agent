@@ -23,8 +23,15 @@ class TaskDoerAgent(TypedDict):
     task: str
     description: str
     prompt: str | None
+    
     result_code: dict | None
     tester_result: dict | None
+    
+    plan: dict | None
+    current_step: int
+    step_results: List[dict] | None
+    
+    latest_observation: str | None
     
 @dataclass
 class TaskDoerAgentContext:
