@@ -1,103 +1,118 @@
-from app.states.task_doer_agent_state import TaskDoerAgent, TesterResult, ResultCode, TaskDoerAgentContext
+from app.states.task_doer_agent_state import TaskDoerAgent, TesterResult, ResultCode, TaskDoerAgentContext, TaskPlan
 from app.tools.task_doer_tools import python_code_executer
+from app.planning.decomposer import TaskDecomposer
+from app.planning.react import ReAct
 from langgraph.types import Command, interrupt
 from langgraph.graph import END
 from langgraph.runtime import Runtime
 from langchain_ollama import ChatOllama
-from typing import Literal, List
+from typing import Literal, List, Callable
 from uuid import uuid4
 
-try:
-    OLLAMA_RAW_MODEL = ChatOllama(model="qwen3:8b", base_url="http://localhost:11434")
-except Exception as error:
-    print("Can't load 'qwen3:8b' model")
+OLLAMA_RAW_MODEL = ChatOllama(model="qwen3:8b", base_url="http://localhost:11434")
+
+decomposer = TaskDecomposer(model = OLLAMA_RAW_MODEL)
+ReActFramwork = ReAct(model=OLLAMA_RAW_MODEL, tools=[python_code_executer], max_iteration=3)
+CODE_WRITER = OLLAMA_RAW_MODEL.with_structured_output(ResultCode)
 
 def getting_task(state: TaskDoerAgent, runtime: Runtime[TaskDoerAgentContext]):
+    print("In the 'getting_task' node")
     user_id = runtime.context.user_id
+    
     print("user_id", user_id)
     namespace = (user_id, "memories")
     
     memories = runtime.store.search(namespace, limit=20)
     previus_memories = [memroy.value["data"] for memroy in memories]
-    print("memories", previus_memories)
-    if len(previus_memories) > 0:
+    print("memories", previus_memories, '\n', 10*"=", '\n')
         
-        prompt = f"""
-        I have a task.
+    plan: TaskPlan = decomposer.task_decomposer(title=state["task"], description=state["description"], previus_memoris=previus_memories) if len(previus_memories) > 0 else decomposer.task_decomposer(title=state["task"], description=state["description"])
+    
+    print(10*'=', "Plan" ,'\n', plan)
+    prompt = f"""
+    I have a task.
 
-        Title:
-        {state["task"]}
+    Title:
+    {state["task"]}
 
-        Description:
-        {state["description"]}
+    Description:
+    {state["description"]}
         
-        Some prior information that might help you:
-        {previus_memories}
-
-        Now please write Python code for this task
-        and fill the code in the result_code field.
-        """
-    else:
-        prompt = f"""
-        I have a task.
-        
-        Title:
-        {state["task"]}
-        
-        Description:
-        {state["description"]}
-
-        Now please write Python code for this task
-        and fill the code in the result_code field.
-        """
-        
-    return Command(update={"prompt": prompt, "tester_result": None, "result_code": None}, goto="write_code")
+    step by step plan for ding this task:
+    {TaskPlan.model_validate(plan).model_dump(mode="json")}
+    """
+    
+    return Command(update={"prompt": prompt, "tester_result": None, "result_code": None, "plan": TaskPlan.model_validate(plan).model_dump(mode="json")}, goto="write_code")
 
 def write_code(state: TaskDoerAgent):
+    print("In the 'write_code' node")
+    
+    observation = None
+    step_result: List[dict] = []
+    for idx, item in enumerate(state.get("plan")["steps"]):
+        result = ReActFramwork(item, observation)
+        observation = result
+        state["current_step"] = idx + 1
+        step_result.append(result)
+        
+    state["step_results"] = step_result
+    state["latest_observation"] = observation
+    wirte_code_prompt: str = state.get("prompt") + f"""
+    plan or ReAct reuslt:
+    {step_result}
+    
+    please attention to code / statment field
+    """
+        
+    final_code = CODE_WRITER.invoke(wirte_code_prompt)
+    
+    return Command(update={"current_step": state["current_step"], "step_results": step_result, "latest_observation": observation, "result_code": ResultCode.model_validate(final_code).model_dump(mode="json")}, goto="test_code")
+    
 
-    ollama_model_write_code = OLLAMA_RAW_MODEL.with_structured_output(ResultCode)
+# def write_code(state: TaskDoerAgent):
+#     print("In the 'write_code' node")
+    
+    
+#     ollama_model_write_code = OLLAMA_RAW_MODEL.with_structured_output(ResultCode)
 
-    if state.get("tester_result") is not None:
+#     if state.get("tester_result") is not None:
 
-        previous_code = (state.get("result_code") or {}).get("code") or ""
+#         previous_code = (state.get("result_code") or {}).get("code") or ""
 
-        tester = state["tester_result"]
+#         tester = state["tester_result"]
 
-        issues = f"""
-        This Python code has some problems:
+#         issues = f"""
+#         This Python code has some problems:
 
-        syntactic_issue: {tester.get("syntactic_issue")}
+#         syntactic_issue: {tester.get("syntactic_issue")}
 
-        logic_issue: {tester.get("logic_issue")}
+#         logic_issue: {tester.get("logic_issue")}
 
-        Please fix the code.
-        """
+#         Please fix the code.
+#         """
 
-        updated_prompt = [
-            state["prompt"] or "",
-            previous_code,
-            issues
-        ]
+#         updated_prompt = [
+#             state["prompt"] or "",
+#             previous_code,
+#             issues
+#         ]
 
-        result = ollama_model_write_code.invoke(updated_prompt)
+#         result = ollama_model_write_code.invoke(updated_prompt)
 
-    else:
+#     else:
+#         result = ollama_model_write_code.invoke(state["prompt"])
 
-        result = ollama_model_write_code.invoke(
-            state["prompt"]
-        )
+#     # Convert Pydantic model to a regular dictionary
+#     result_dict = ResultCode.model_validate(result).model_dump(mode="json")
 
-    # Convert Pydantic model to a regular dictionary
-    result_dict = ResultCode.model_validate(result).model_dump(
-        mode="json"
-    )
-
-    return Command(update={"tester_result": None, "result_code": result_dict}, goto="test_code")
+#     return Command(update={"tester_result": None, "result_code": result_dict}, goto="test_code")
     
 def test_code(state: TaskDoerAgent):
-
-    code = (state.get("result_code") or {}).get("code")
-
+    print("In the 'test_code' node")
+    
+    code = state.get("result_code")["code"]
+    print(f"output code: ", code, '\n')
+    
     if not code:
         raise ValueError("No generated code found in result_code")
 

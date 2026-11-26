@@ -17,7 +17,11 @@ def run_agent(task_title: str, description: str):
                                  "task": task_title,
                                  "description": description,
                                  "prompt": None,
-                                 "tester_result": None}
+                                 "tester_result": None,
+                                 "plan": None,
+                                 "current_step":0,
+                                 "step_results": None,
+                                 "latest_observation": None}
 
     thread_id: str = f"task-doer-{uuid4().hex}"
     user_id = "user-101"
