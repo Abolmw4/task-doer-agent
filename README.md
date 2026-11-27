@@ -45,8 +45,8 @@ The agent is a LangGraph `StateGraph` with five nodes. Routing is dynamic — ea
 
 ### The agent loop in detail
 
-1. **`getting_task`** — Composes the generation prompt from the task name and description in the graph state.
-2. **`write_code`** — Calls the LLM with structured output (`ResultCode`) so the model always returns valid JSON containing the code. On retries, the previous test failures (`syntactic_issue`, `logic_issue`) are appended to the prompt so the model can fix its own mistakes.
+1. **`getting_task`** — Loads long-term memories for the user, decomposes the task into a `TaskPlan` with `TaskDecomposer`, and composes the generation prompt.
+2. **`write_code`** — Runs each plan step through a ReAct loop (`python_code_executer`), then calls the LLM with structured output (`ResultCode`) so the model always returns valid JSON containing the code. On retries, the previous test failures (`syntactic_issue`, `logic_issue`) are appended to the prompt so the model can fix its own mistakes.
 3. **`test_code`** — The LLM is given the `python_code_executer` tool. It calls the tool to actually execute the generated code, then reviews the output and returns a structured `TesterResult` verdict (pass/fail, syntax issues, logic issues). Failures route back to `write_code` automatically.
 4. **`human_decision`** — Uses LangGraph's `interrupt()` to pause the graph and surface the generated code to you in the terminal. Approve it, or reject it with feedback — the agent loops back and revises.
 5. **`show_result`** — Prints the final, human-approved code.
@@ -56,10 +56,10 @@ The agent is a LangGraph `StateGraph` with five nodes. Routing is dynamic — ea
 ## Features
 
 - 🤖 **Fully local LLM** — runs on Ollama (`qwen3:8b`), no API keys or cloud costs
-- 🔄 **Self-healing code loop** — test failures are fed back to the model as structured feedback until the code works
+- 🔄 **Self-healing code loop (in progress)** — test failures are reported as structured feedback; feeding that feedback back into `write_code` is on the roadmap
 - 🛠️ **Real tool calling** — the agent executes the code it writes via `python_code_executer` and reviews the actual runtime output
 - 🧑‍⚖️ **Human-in-the-loop approval** — the graph interrupts and waits for your `yes/no` (plus optional feedback) before finishing
-- 💾 **Checkpointed state** — `MemorySaver` + thread IDs make interrupt/resume reliable
+- 💾 **Checkpointed state** — in-memory by default, Redis-backed in production; thread IDs make interrupt/resume reliable
 - 📐 **Structured output** — Pydantic schemas (`ResultCode`, `TesterResult`) keep model responses machine-readable
 
 ---
@@ -68,15 +68,27 @@ The agent is a LangGraph `StateGraph` with five nodes. Routing is dynamic — ea
 
 ```
 task-doer-agent/
-├── main.py                          # Entry point — runs the demo task
+├── main.py                          # Interactive CLI entry point
 ├── app/
 │   ├── graph.py                     # LangGraph workflow definition + compilation
+│   ├── hitl.py                      # Human-in-the-loop approval parsing
+│   ├── observability.py             # Phoenix/OpenTelemetry setup
 │   ├── nodes/
 │   │   └── task_doer_nodes.py       # All 5 node implementations
+│   ├── planning/
+│   │   ├── decomposer.py            # Task -> TaskPlan decomposition
+│   │   └── react.py                 # ReAct loop used by each plan step
 │   ├── states/
 │   │   └── task_doer_agent_state.py # Pydantic state models
 │   └── tools/
 │       └── task_doer_tools.py       # python_code_executer tool
+├── tests/
+│   └── test_workflow.py             # Mocked unit + graph tests
+├── phoenix-monitorin/
+│   └── docker-compose.yml           # Phoenix + Postgres + Redis
+├── requirements.txt
+├── requirements-dev.txt
+├── .env.example
 └── README.md
 ```
 
@@ -88,6 +100,7 @@ task-doer-agent/
 
 - **Python 3.10+**
 - **[Ollama](https://ollama.com/)** installed and running locally
+- **Docker** (optional — only needed for `MODE=production` and Phoenix tracing)
 
 ### 1. Install Ollama and pull the model
 
@@ -108,7 +121,7 @@ cd task-doer-agent
 python -m venv .venv
 source .venv/bin/activate
 
-pip install langgraph langchain langchain-ollama pydantic
+pip install -r requirements.txt
 ```
 
 ### 3. Run the agent
@@ -117,54 +130,89 @@ pip install langgraph langchain langchain-ollama pydantic
 python main.py
 ```
 
+By default `MODE=development`, so state is kept in memory and **no database is
+required**. Copy `.env.example` to `.env` if you want to override the defaults.
+
 The demo task (a human-vs-computer Tic-Tac-Toe game) is hard-coded in `main.py`. When the agent reaches the human decision point, you'll see the generated code in your terminal:
 
 ```
-Do you approved this code?yes/no:
+Do you approve this code? (yes/no):
 ```
 
-- Type **`yes`** to approve and finish.
-- Type anything else to reject — the agent loops back to `write_code` and revises.
+- Type **`yes`** (or `y`, `true`, `approved`) to approve and finish.
+- Type anything else to reject — the agent asks for feedback, loops back to `write_code`, and revises. Empty input and `no`/`false` are always treated as rejection.
 
 ### Running your own task
 
 Edit the initial state in `main.py`:
 
 ```python
-inital_state = TaskDoerAgent(
-    code_id="code-101",
-    result_code=None,
-    task="Your task title",
-    description="A detailed description of what you want built",
-    prompt=None,
-    tester_result=None,
-)
+inital_state: TaskDoerAgent = {
+    "code_id": "code-101",
+    "result_code": None,
+    "task": "Your task title",
+    "description": "A detailed description of what you want built",
+    "prompt": None,
+    "tester_result": None,
+    "plan": None,
+    "current_step": 0,
+    "step_results": None,
+    "latest_observation": None,
+}
 ```
 
 ---
 
 ## Configuration
 
-Configuration is currently hard-coded (environment-based config is planned):
+Settings are read from environment variables. A local `.env` file is loaded
+automatically (see `.env.example`).
 
-| Setting | Location | Current value |
-|---|---|---|
-| Model | `app/nodes/task_doer_nodes.py` | `qwen3:8b` |
-| Ollama URL | `app/nodes/task_doer_nodes.py` | `http://localhost:11434` |
-| Demo task | `main.py` | Tic-Tac-Toe game |
-| Thread ID | `main.py` | `task-doer-101` |
+| Variable | Default | Used when | Description |
+|---|---|---|---|
+| `MODE` | `development` | always | `development` uses in-memory state; `production` uses Redis + Postgres |
+| `REDIS_URL` | `redis://localhost:6380` | `MODE=production` | Short-term checkpoint store |
+| `LONG_TERM_MEMORY_URL` | `postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable` | `MODE=production` | Long-term memory store |
+| `PHOENIX_COLLECTOR_ENDPOINT` | `http://127.0.0.1:6006/v1/traces` | always | OpenTelemetry trace endpoint |
 
-To use a different model, pull it with Ollama and change the model name in `task_doer_nodes.py`:
+The model and Ollama URL are still hard-coded in `app/nodes/task_doer_nodes.py`:
 
 ```python
-OLLAMA_RAW_MODEL = ChatOllama(model="your-model", base_url="http://localhost:11434")
+OLLAMA_RAW_MODEL = ChatOllama(model="qwen3:8b", base_url="http://localhost:11434")
+```
+
+### Production mode (Redis + Postgres)
+
+`MODE=production` enables persistent short-term (Redis) and long-term
+(Postgres) memory. The bundled compose file starts Phoenix, Postgres, and Redis
+on the ports the app expects:
+
+```bash
+cd phoenix-monitorin
+docker compose up -d
+cd ..
+
+MODE=production python main.py
+```
+
+> Postgres is exposed on `127.0.0.1:5432` and Redis on `127.0.0.1:6380`.
+> Stop any local services on those ports first, or override `REDIS_URL` /
+> `LONG_TERM_MEMORY_URL` in `.env`.
+
+### Tests
+
+The test suite is fully mocked and does not need Ollama or any database:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q
 ```
 
 ---
 
 ## ⚠️ Security Notice
 
-The `python_code_executer` tool runs LLM-generated code with `exec()` **on your machine, with no sandboxing**. This is the point of the project — the agent tests its own code — but you should:
+The `python_code_executer` tool runs LLM-generated code as a subprocess **on your machine, with no sandboxing**. This is the point of the project — the agent tests its own code — but you should:
 
 - Only run it in a disposable environment (VM, container, or dedicated machine)
 - Review the generated code at the human approval step (that's what it's for)
@@ -176,13 +224,14 @@ The `python_code_executer` tool runs LLM-generated code with `exec()` **on your 
 
 The project is under active development. Planned improvements:
 
-- [ ] Dependency manifest (`requirements.txt` / `pyproject.toml`)
-- [ ] Environment-based configuration (`.env` support for model, URL, etc.)
+- [x] Dependency manifest (`requirements.txt`)
+- [x] Environment-based configuration (`.env` support for mode, database URLs, tracing)
 - [ ] CLI arguments for tasks instead of hard-coded values
 - [ ] More tools (file I/O, web search, package installation)
-- [ ] Persistent checkpointing (SQLite/Postgres instead of in-memory)
+- [x] Persistent checkpointing (Redis + Postgres in production mode)
 - [ ] Sandboxed code execution (Docker / `nsjail`)
-- [ ] Test suite
+- [x] Test suite (mocked, no external services)
+- [ ] Consume tester feedback inside `write_code` so failed reviews actually repair the code
 
 ---
 
@@ -203,4 +252,4 @@ Contributions are welcome! The codebase is small and a good starting point for l
 
 ## License
 
-This project is currently unlicensed. Contact the author before reuse.
+MIT — see [LICENSE](LICENSE).
