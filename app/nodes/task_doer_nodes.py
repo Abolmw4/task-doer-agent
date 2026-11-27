@@ -1,3 +1,4 @@
+from app.hitl import parse_approval
 from app.states.task_doer_agent_state import TaskDoerAgent, TesterResult, ResultCode, TaskDoerAgentContext, TaskPlan
 from app.tools.task_doer_tools import python_code_executer
 from app.planning.decomposer import TaskDecomposer
@@ -26,7 +27,7 @@ def getting_task(state: TaskDoerAgent, runtime: Runtime[TaskDoerAgentContext]):
     previus_memories = [memroy.value["data"] for memroy in memories]
     print("memories", previus_memories, '\n', 10*"=", '\n')
         
-    plan: TaskPlan = decomposer.task_decomposer(title=state["task"], description=state["description"], previus_memoris=previus_memories) if len(previus_memories) > 0 else decomposer.task_decomposer(title=state["task"], description=state["description"])
+    plan: TaskPlan = decomposer.task_decomposer(title=state["task"], description=state["description"], previus_memoris=previus_memories) if len(previus_memories) > 0 else decomposer.task_decomposer(title=state["task"], description=state["description"], previus_memoris=None)
     
     print(10*'=', "Plan" ,'\n', plan)
     prompt = f"""
@@ -69,44 +70,6 @@ def write_code(state: TaskDoerAgent):
     return Command(update={"current_step": state["current_step"], "step_results": step_result, "latest_observation": observation, "result_code": ResultCode.model_validate(final_code).model_dump(mode="json")}, goto="test_code")
     
 
-# def write_code(state: TaskDoerAgent):
-#     print("In the 'write_code' node")
-    
-    
-#     ollama_model_write_code = OLLAMA_RAW_MODEL.with_structured_output(ResultCode)
-
-#     if state.get("tester_result") is not None:
-
-#         previous_code = (state.get("result_code") or {}).get("code") or ""
-
-#         tester = state["tester_result"]
-
-#         issues = f"""
-#         This Python code has some problems:
-
-#         syntactic_issue: {tester.get("syntactic_issue")}
-
-#         logic_issue: {tester.get("logic_issue")}
-
-#         Please fix the code.
-#         """
-
-#         updated_prompt = [
-#             state["prompt"] or "",
-#             previous_code,
-#             issues
-#         ]
-
-#         result = ollama_model_write_code.invoke(updated_prompt)
-
-#     else:
-#         result = ollama_model_write_code.invoke(state["prompt"])
-
-#     # Convert Pydantic model to a regular dictionary
-#     result_dict = ResultCode.model_validate(result).model_dump(mode="json")
-
-#     return Command(update={"tester_result": None, "result_code": result_dict}, goto="test_code")
-    
 def test_code(state: TaskDoerAgent):
     print("In the 'test_code' node")
     
@@ -178,13 +141,13 @@ def human_decision(state: TaskDoerAgent):
 
         answer = decision.get("approved", False)
 
-        approved = (answer if isinstance(answer, bool) else str(answer).strip().lower() in {"yes", "y", "true"})
+        approved = (answer if isinstance(answer, bool) else parse_approval(answer))
 
-        feedback = decision.get("feedback", "")
+        feedback = str(decision.get("feedback") or "").strip()
 
     else:
 
-        approved = str(decision).strip().lower() in {"yes", "y", "true", "approved"}
+        approved = parse_approval(decision)
 
         feedback = ""
 
@@ -192,7 +155,11 @@ def human_decision(state: TaskDoerAgent):
 
         return Command(update={}, goto="show_result")
 
-    prompt = (state.get("prompt") or "") + f"\nFeedback:\n{feedback}"
+    prompt = state.get("prompt") or ""
+
+    if feedback:
+
+        prompt = f"{prompt}\nFeedback:\n{feedback}"
 
     return Command(update={"prompt": prompt}, goto="write_code")
 
